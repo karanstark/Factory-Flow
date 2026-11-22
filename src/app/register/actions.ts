@@ -13,6 +13,12 @@ export async function registerAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const role = (String(formData.get("role") ?? ROLES.SALESMAN)) as Role;
 
+  // Public self-registration is limited to floor roles; office roles
+  // (admin/owner/accountant) are provisioned by an admin under /admin/users.
+  if (role !== ROLES.SALESMAN && role !== ROLES.PRODUCTION) {
+    redirect("/register?error=role");
+  }
+
   if (!email || !password || !name) {
     redirect("/register?error=missing");
   }

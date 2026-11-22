@@ -27,7 +27,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
 
         {error && (
           <div className="mb-5 rounded-lg border border-red-900 bg-red-950 px-4 py-3 text-sm text-red-200">
-            {error === "missing" ? "Please fill in all fields." : error === "short" ? "Password must be at least 8 characters." : "An account with this email already exists."}
+            {error === "missing" ? "Please fill in all fields." : error === "short" ? "Password must be at least 8 characters." : error === "role" ? "Please choose a valid role." : "An account with this email already exists."}
           </div>
         )}
 
@@ -78,11 +78,11 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             >
               <option value={ROLES.SALESMAN}>Salesman</option>
               <option value={ROLES.PRODUCTION}>Production</option>
-              <option value={ROLES.ACCOUNTANT}>Accountant</option>
-              <option value={ROLES.ADMIN}>Admin</option>
-              <option value={ROLES.OWNER}>Owner</option>
             </select>
           </div>
+          <p className="text-[11px] text-slate-600 -mt-3">
+            Office roles (admin, owner, accountant) are created by an administrator.
+          </p>
           <button type="submit" className="w-full rounded-lg bg-emerald-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400">
             Create account
           </button>
