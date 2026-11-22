@@ -13,9 +13,20 @@ import { computeGst, financialYear } from "@/lib/gst";
 import { computeRunCost } from "@/server/costing";
 import { convertQuantity } from "@/lib/units";
 import { planConsumptionForBatch } from "@/server/bom";
+import { inr } from "@/lib/currency";
 
 const approx = (d: Decimal.Value, n: number, eps = 0.0001) =>
   expect(Number(d)).toBeCloseTo(n, Math.round(-Math.log10(eps)));
+
+describe("currency formatting", () => {
+  it("formats large rupee amounts without converting through floating point", () => {
+    expect(inr("123456789012345.67")).toBe("₹12,34,56,78,90,12,345.67");
+  });
+
+  it("formats negative rupee amounts with two decimal places", () => {
+    expect(inr("-12.5")).toBe("₹-12.50");
+  });
+});
 
 describe("weighted-average purchase costing", () => {
   it("computes flour avg rate after 60kg @ ₹45 added to 100kg @ ₹42", () => {
@@ -23,6 +34,7 @@ describe("weighted-average purchase costing", () => {
     const r = weightedAverageRate(100, 42, 60, 45);
     approx(r, 43.125);
   });
+
   it("handles a first receipt from zero stock", () => {
     approx(weightedAverageRate(0, 0, 100, 42), 42);
   });

@@ -1,10 +1,9 @@
 "use server";
 
 import { requireRole } from "@/lib/session";
-import { ROLES } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
-import { inr } from "@/lib/currency";
-import { INVOICE_STATUS } from "@/lib/constants";
+import { D, inr } from "@/lib/currency";
+import { INVOICE_STATUS, ROLES } from "@/lib/constants";
 
 export async function getReportsDashboardData() {
   const user = await requireRole(ROLES.ACCOUNTANT, ROLES.ADMIN, ROLES.OWNER, ROLES.PRODUCTION);
@@ -12,7 +11,7 @@ export async function getReportsDashboardData() {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [invoices, payments, customers, inventory] = await Promise.all([
+  const [invoices, payments, customers, inventory, monthPaymentTotal] = await Promise.all([
     prisma.invoice.findMany({
       where: { status: { not: "CANCELLED" } },
       include: { customer: { select: { name: true, code: true, state: true } }, items: true, payments: true },
@@ -33,30 +32,66 @@ export async function getReportsDashboardData() {
       select: { id: true, code: true, name: true, category: true, unit: true, currentStock: true, avgRate: true },
       orderBy: [{ category: "asc" }, { name: "asc" }],
     }),
+    prisma.payment.aggregate({
+      where: { paymentDate: { gte: monthStart } },
+      _sum: { amount: true },
+    }),
   ]);
 
-  const inventoryValue = inventory.reduce((total, item) => total + Number(item.currentStock) * Number(item.avgRate), 0);
+  const inventoryValue = inventory.reduce(
+    (total, item) => total.plus(D(item.currentStock).times(item.avgRate)),
+    D(0),
+  );
 
   const postedInvoices = invoices.filter((i) => i.status === INVOICE_STATUS.POSTED);
   const partiallyPaid = invoices.filter((i) => i.status === INVOICE_STATUS.PARTIALLY_PAID);
   const paidInvoices = invoices.filter((i) => i.status === INVOICE_STATUS.PAID);
 
-  const totalInvoiced = invoices.reduce((sum, i) => sum + Number(i.totalAmount), 0);
+  const totalInvoiced = invoices.reduce((sum, i) => sum.plus(i.totalAmount), D(0));
   const totalPaid = invoices.reduce((sum, i) => {
-    const paid = i.payments.reduce((p, pay) => p + Number(pay.amount), 0);
-    return sum + paid;
-  }, 0);
-  const totalOutstanding = totalInvoiced - totalPaid;
-
-  const thisMonthPayments = payments
-    .filter((p) => p.paymentDate >= monthStart)
-    .reduce((sum, p) => sum + Number(p.amount), 0);
+    return sum.plus(i.payments.reduce((paid, payment) => paid.plus(payment.amount), D(0)));
+  }, D(0));
+  const totalOutstanding = totalInvoiced.minus(totalPaid);
+  const thisMonthPayments = monthPaymentTotal._sum.amount ?? D(0);
 
   const customerBalances = customers.map((c) => {
-    const invoiced = c.invoices.reduce((sum, i) => sum + Number(i.totalAmount), 0);
-    const paid = c.invoices.reduce((sum, i) => sum + i.payments.reduce((p, pay) => p + Number(pay.amount), 0), 0);
-    return { customer: c, invoiced, paid, balance: Math.max(0, invoiced - paid) };
+    const invoiced = c.invoices.reduce((sum, i) => sum.plus(i.totalAmount), D(0));
+    const paid = c.invoices.reduce(
+      (sum, i) => sum.plus(i.payments.reduce((invoicePaid, payment) => invoicePaid.plus(payment.amount), D(0))),
+      D(0),
+    );
+    const balance = invoiced.minus(paid);
+    return {
+      customer: c,
+      invoiced: invoiced.toString(),
+      paid: paid.toString(),
+      balance: balance.toString(),
+    };
   });
+
+  // GST summary across non-cancelled invoices.
+  const gst = invoices.reduce(
+    (acc, i) => ({
+      taxable: acc.taxable.plus(i.totalTaxable),
+      cgst: acc.cgst.plus(i.cgst),
+      sgst: acc.sgst.plus(i.sgst),
+      igst: acc.igst.plus(i.igst),
+      count: acc.count + 1,
+    }),
+    { taxable: D(0), cgst: D(0), sgst: D(0), igst: D(0), count: 0 },
+  );
+
+  // Simple ageing of unpaid invoice balances by days since invoice date.
+  const now = Date.now();
+  const ageing = { "0-30": D(0), "31-60": D(0), "61-90": D(0), "90+": D(0) };
+  for (const i of invoices) {
+    const paidSum = i.payments.reduce((s, p) => s.plus(p.amount), D(0));
+    const bal = D(i.totalAmount).minus(paidSum);
+    if (bal.lte(0)) continue;
+    const days = Math.floor((now - i.invoiceDate.getTime()) / 86400000);
+    const bucket = days <= 30 ? "0-30" : days <= 60 ? "31-60" : days <= 90 ? "61-90" : "90+";
+    ageing[bucket as keyof typeof ageing] = ageing[bucket as keyof typeof ageing].plus(bal);
+  }
 
   return {
     user,
@@ -73,7 +108,12 @@ export async function getReportsDashboardData() {
     },
     invoices: invoices.slice(0, 10),
     payments: payments.slice(0, 10),
-    customerBalances: customerBalances.filter((c) => c.balance > 0).slice(0, 10),
+    customerBalances: customerBalances.filter((c) => D(c.balance).gt(0)).slice(0, 10),
     inventory,
+    gstSummary: {
+      taxable: inr(gst.taxable), cgst: inr(gst.cgst), sgst: inr(gst.sgst), igst: inr(gst.igst),
+      invoiceCount: gst.count,
+    },
+    ageing: Object.fromEntries(Object.entries(ageing).map(([k, v]) => [k, inr(v)])),
   };
 }

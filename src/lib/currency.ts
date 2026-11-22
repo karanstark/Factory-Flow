@@ -36,11 +36,9 @@ export function pct(base: Decimal.Value, ratePercent: Decimal.Value): Decimal {
 /** Format a Decimal/number/string as Indian Rupees with 2 decimals. */
 export function inr(v: Decimal.Value): string {
   const d = round2(v);
-  // Use en-IN for the lakh/crore grouping; show exactly 2 decimals.
-  return "₹" + d.toNumber().toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const [whole, fraction] = d.abs().toFixed(2).split(".");
+  const groupedWhole = BigInt(whole).toLocaleString("en-IN");
+  return `₹${d.isNegative() ? "-" : ""}${groupedWhole}.${fraction}`;
 }
 
 /** Plain numeric string with 2 decimals (used in exports/calculations). */

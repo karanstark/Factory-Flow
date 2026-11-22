@@ -13,10 +13,11 @@ import {
   Users,
   Calculator,
 } from "lucide-react";
-import { inr } from "@/lib/currency";
+import { D, inr } from "@/lib/currency";
 import { INVOICE_STATUS } from "@/lib/constants";
 import { getReportsDashboardData } from "./actions";
 import { logoutAction } from "@/app/login/actions";
+import { Download } from "lucide-react";
 
 const dateFormatter = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" });
 const numberFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 });
@@ -70,7 +71,10 @@ function StatCard({ label, value, detail, icon: Icon, tone }: { label: string; v
 
 export default async function ReportsDashboardUI() {
   const data = await getReportsDashboardData();
-  const { user, stats, invoices, payments, customerBalances, inventory } = data;
+  const { user, stats, invoices, payments, customerBalances, inventory, gstSummary, ageing } = data;
+
+  const exportBtn =
+    "inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/30 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-400/10";
 
   const roleLabels: Record<string, string> = {
     ADMIN: "Administrator",
@@ -165,13 +169,49 @@ export default async function ReportsDashboardUI() {
             <StatCard label="Outstanding" value={stats.totalOutstanding} detail={`${customerBalances.length} customers with balance`} icon={IndianRupee} tone="amber" />
           </section>
 
+          <section className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="rounded-2xl border border-white/[0.07] bg-[#0e1625] p-5 sm:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="font-semibold text-white">GST Summary</h2>
+                  <p className="mt-1 text-xs text-slate-500">{gstSummary.invoiceCount} non-cancelled invoices</p>
+                </div>
+                <a href="/reports/export/gst-summary" className={exportBtn}><Download size={13} /> CSV</a>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  ["Taxable", gstSummary.taxable], ["CGST", gstSummary.cgst],
+                  ["SGST", gstSummary.sgst], ["IGST", gstSummary.igst],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl bg-white/[0.02] p-3">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-600">{label}</p>
+                    <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/[0.07] bg-[#0e1625] p-5 sm:p-6">
+              <h2 className="font-semibold text-white">Receivables ageing</h2>
+              <p className="mt-1 text-xs text-slate-500">Unpaid balances by invoice age</p>
+              <div className="mt-4 grid grid-cols-4 gap-3">
+                {Object.entries(ageing).map(([bucket, value]) => (
+                  <div key={bucket} className="rounded-xl bg-white/[0.02] p-3">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-600">{bucket} days</p>
+                    <p className="mt-1 text-sm font-semibold text-amber-300">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
           <section id="invoices" className="mt-6">
             <div className="rounded-2xl border border-white/[0.07] bg-[#0e1625] p-5 sm:p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="font-semibold text-white">Recent Invoices</h2>
-                  <p className="mt-1 text-xs text-slate-500">All invoices with payment status</p>
+                  <h2 className="font-semibold text-white">Sales Register</h2>
+                  <p className="mt-1 text-xs text-slate-500">Recent invoices — full register exportable below</p>
                 </div>
+                <a href="/reports/export/sales-register" className={exportBtn}><Download size={13} /> Export CSV</a>
               </div>
               {invoices.length ? (
                 <div className="overflow-x-auto">
@@ -188,14 +228,14 @@ export default async function ReportsDashboardUI() {
                     </thead>
                     <tbody>
                       {invoices.map((invoice) => {
-                        const paid = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-                        const balance = Math.max(0, Number(invoice.totalAmount) - paid);
+                        const paid = invoice.payments.reduce((sum, payment) => sum.plus(payment.amount), D(0));
+                        const balance = D(invoice.totalAmount).minus(paid);
                         return (
                           <tr key={invoice.id} className="border-b border-white/[0.05] last:border-0">
                             <td className="py-3.5 font-medium text-slate-200">{invoice.invoiceNumber}</td>
                             <td className="py-3.5 text-slate-400">{invoice.customer.name}</td>
                             <td className="py-3.5 text-slate-500">{dateFormatter.format(invoice.invoiceDate)}</td>
-                            <td className="py-3.5 text-slate-300">{inr(Number(invoice.totalAmount))}</td>
+                            <td className="py-3.5 text-slate-300">{inr(invoice.totalAmount)}</td>
                             <td className="py-3.5 text-slate-300">{inr(paid)}</td>
                             <td className="py-3.5 text-right"><StatusBadge status={invoice.status} /></td>
                           </tr>
@@ -232,7 +272,7 @@ export default async function ReportsDashboardUI() {
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-sm font-medium text-emerald-300">{inr(Number(payment.amount))}</p>
+                        <p className="text-sm font-medium text-emerald-300">{inr(payment.amount)}</p>
                         <p className="text-[10px] text-slate-500">{payment.paymentMethod} · {dateFormatter.format(payment.paymentDate)}</p>
                       </div>
                     </div>
@@ -255,7 +295,9 @@ export default async function ReportsDashboardUI() {
               {customerBalances.length ? (
                 <div className="space-y-4">
                   {customerBalances.map(({ customer, invoiced, paid, balance }) => {
-                    const paidRatio = invoiced > 0 ? Math.min(100, (paid / invoiced) * 100) : 0;
+                    const paidRatio = D(invoiced).gt(0)
+                      ? Math.min(100, D(paid).div(invoiced).times(100).toNumber())
+                      : 0;
                     return (
                       <div key={customer.id}>
                         <div className="flex items-center justify-between gap-3">
@@ -285,9 +327,10 @@ export default async function ReportsDashboardUI() {
             <div className="rounded-2xl border border-white/[0.07] bg-[#0e1625] p-5 sm:p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="font-semibold text-white">Inventory Valuation</h2>
+                  <h2 className="font-semibold text-white">Stock Report</h2>
                   <p className="mt-1 text-xs text-slate-500">Current stock valuation by category</p>
                 </div>
+                <a href="/reports/export/stock-report" className={exportBtn}><Download size={13} /> Export CSV</a>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[500px] text-left text-sm">
@@ -302,7 +345,7 @@ export default async function ReportsDashboardUI() {
                   </thead>
                   <tbody>
                     {inventory.map((item) => {
-                      const value = Number(item.currentStock) * Number(item.avgRate);
+                      const value = D(item.currentStock).times(item.avgRate);
                       return (
                         <tr key={item.id} className="border-b border-white/[0.05] last:border-0">
                           <td className="py-3">
@@ -310,7 +353,7 @@ export default async function ReportsDashboardUI() {
                           </td>
                           <td className="py-3 text-slate-400">{item.category.replaceAll("_", " ")}</td>
                           <td className="py-3 text-slate-300">{numberFormatter.format(Number(item.currentStock))} {item.unit}</td>
-                          <td className="py-3 text-right text-slate-500">{inr(Number(item.avgRate))}</td>
+                          <td className="py-3 text-right text-slate-500">{inr(item.avgRate)}</td>
                           <td className="py-3 text-right font-medium text-slate-200">{inr(value)}</td>
                         </tr>
                       );
