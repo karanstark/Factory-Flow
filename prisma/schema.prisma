@@ -1,0 +1,531 @@
+// FACTORYFLOW - Order-to-Audit Management System
+// Prisma schema. Designed for PostgreSQL (Supabase) production, but uses
+// SQLite locally so the project runs with zero external setup and the
+// benchmark tests execute offline.
+//
+// To switch to production PostgreSQL/Supabase:
+//   1. Change provider below to "postgresql".
+//   2. Set DATABASE_URL to the Supabase pooled connection string.
+//   3. Run `npx prisma migrate deploy`.
+//
+// IMPORTANT (SQLite): Prisma enums are not supported on SQLite, so role /
+// status fields are String with app-layer validation (see src/lib/constants.ts
+// and the Zod schemas in src/server/validators). On PostgreSQL these can be
+// promoted to native enums.
+//
+// Money: all currency values use Decimal (stored as TEXT under SQLite, but
+// Prisma returns decimal.js objects) — never floating point.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// AUTH & USERS
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  // SALESMAN | ADMIN | PRODUCTION | ACCOUNTANT | OWNER (validated in app layer)
+  role         String
+  passwordHash String
+  salt         String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Customers this salesman is responsible for (single-assignment per spec).
+  assignedCustomers Customer[] @relation("CustomerSalesman")
+
+  // Two relations to SalesOrder: creator (salesman) and reviewer (admin).
+  salesmanOrders  SalesOrder[] @relation("SalesOrderSalesman")
+  reviewedOrders  SalesOrder[] @relation("SalesOrderReviewer")
+
+  // Two relations to ProductionRun: creator and approver.
+  createdProductionRuns  ProductionRun[] @relation("ProductionRunCreator")
+  approvedProductionRuns ProductionRun[] @relation("ProductionRunApprover")
+
+  // createdBy on Purchase/Invoice/Dispatch/Payment/BOM are plain String? columns
+  // (no FK relation), so there is no back-relation array here. Query those by
+  // `where: { createdBy: userId }`.
+  stockMovements   StockMovement[]
+  auditLogs        AuditLog[]
+}
+
+model Customer {
+  id                 String   @id @default(cuid())
+  code               String   @unique // CUST-001
+  name               String
+  // RETAILER | DISTRIBUTOR
+  customerType       String
+  gstin              String? // fictional test GSTIN (clearly demo data)
+  phone              String?
+  address            String?
+  state              String
+  stateCode          String
+  placeOfSupply      String
+  creditLimit        Decimal?
+  active             Boolean  @default(true)
+  assignedSalesmanId String?
+  assignedSalesman   User?    @relation("CustomerSalesman", fields: [assignedSalesmanId], references: [id])
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  orders   SalesOrder[]
+  invoices Invoice[]
+  payments Payment[]
+
+  @@index([assignedSalesmanId])
+}
+
+// ---------------------------------------------------------------------------
+// MASTER DATA
+// ---------------------------------------------------------------------------
+
+// Unified stock-keeping unit. category distinguishes the three stock types so
+// the ledger has a single FK target (clean referential integrity) while still
+// maintaining distinct balances per category. currentStock/avgRate are CACHED
+// values kept in sync with the ledger inside the same DB transaction; the
+// ledger (StockMovement) is the source of truth — see src/lib/reconcile.ts.
+model InventoryItem {
+  id              String   @id @default(cuid())
+  code            String   @unique // RM-001, PKG-001, FG-001
+  name            String
+  sku             String   @unique
+  // RAW_MATERIAL | PACKAGING | FINISHED_GOOD
+  category        String
+  unit            String // kg, g, L, ml, pieces, packets, cartons
+  reorderLevel    Decimal?
+  // WEIGHTED_AVERAGE | FIFO (only WEIGHTED_AVERAGE implemented)
+  valuationMethod String   @default("WEIGHTED_AVERAGE")
+  openingStock    Decimal  @default(0) // seeded opening quantity (metadata)
+  openingRate     Decimal  @default(0) // seeded opening valuation rate
+  currentStock    Decimal  @default(0) // cached ledger-derived balance
+  avgRate         Decimal  @default(0) // cached weighted-average rate
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // If category == FINISHED_GOOD, the sellable product linked to this item.
+  product          Product?
+  stockMovements   StockMovement[]
+  bomItems         BOMItem[]
+  purchaseItems    PurchaseItem[]
+  productionConsumption ProductionConsumption[]
+  costLines        ProductionCostLine[]
+
+  @@index([category])
+}
+
+// Sellable finished good. Links to a FINISHED_GOOD InventoryItem for stock.
+model Product {
+  id             String   @id @default(cuid())
+  code           String   @unique // PROD-001
+  name            String
+  sku            String   @unique
+  description    String?
+  category       String // e.g. "Packaged Snacks"
+  packSize       String // "200 g"
+  sellingPrice   Decimal // before tax
+  gstRate        Decimal // percent (configurable)
+  hsnCode        String
+  unit           String // "packet"
+  inventoryItemId String  @unique
+  inventoryItem  InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  boms            BOM[]
+  salesOrderItems SalesOrderItem[]
+  invoiceItems    InvoiceItem[]
+  dispatchItems   DispatchItem[]
+  productionRuns  ProductionRun[]
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  code      String   @unique // SUP-001
+  name      String
+  gstin     String?
+  phone     String?
+  address   String?
+  state     String?
+  stateCode String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases Purchase[]
+}
+
+// ---------------------------------------------------------------------------
+// BILL OF MATERIALS
+// ---------------------------------------------------------------------------
+
+model BOM {
+  id              String   @id @default(cuid())
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  version         Int      @default(1)
+  expectedYield   Decimal // standard batch output, e.g. 200
+  expectedYieldUnit String // "packets"
+  tolerance       Decimal  @default(3) // % variance tolerance (green/amber/red)
+  // DRAFT | ACTIVE
+  status          String   @default("ACTIVE")
+  notes           String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items          BOMItem[]
+  productionRuns ProductionRun[]
+
+  @@unique([productId, version])
+}
+
+model BOMItem {
+  id                String  @id @default(cuid())
+  bomId             String
+  bom               BOM @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  itemId            String
+  item              InventoryItem @relation(fields: [itemId], references: [id])
+  // Standard quantity required to produce the BOM's expectedYield batch.
+  standardQuantity  Decimal
+  unit              String
+  // Optional per-component tolerance override (null = use BOM.tolerance).
+  wastageTolerance  Decimal?
+  createdAt         DateTime @default(now())
+
+  @@unique([bomId, itemId])
+}
+
+// ---------------------------------------------------------------------------
+// PURCHASES
+// ---------------------------------------------------------------------------
+
+model Purchase {
+  id                   String   @id @default(cuid())
+  purchaseNumber       String   @unique // PUR-000001
+  supplierId           String
+  supplier             Supplier @relation(fields: [supplierId], references: [id])
+  purchaseDate         DateTime
+  referenceInvoiceNumber String?
+  subtotal             Decimal  @default(0)
+  taxAmount            Decimal  @default(0)
+  totalAmount          Decimal  @default(0)
+  remarks              String?
+  createdBy            String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  items PurchaseItem[]
+
+  @@index([purchaseDate])
+}
+
+model PurchaseItem {
+  id         String  @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       InventoryItem @relation(fields: [itemId], references: [id])
+  quantity   Decimal
+  unit       String
+  unitRate   Decimal
+  taxAmount  Decimal @default(0)
+  lineTotal  Decimal
+  createdAt  DateTime @default(now())
+
+  @@index([itemId])
+}
+
+// ---------------------------------------------------------------------------
+// PRODUCTION
+// ---------------------------------------------------------------------------
+
+model ProductionRun {
+  id              String   @id @default(cuid())
+  runNumber       String   @unique // PRD-000001
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  bomId           String?
+  bom             BOM?    @relation(fields: [bomId], references: [id])
+  bomVersion      Int?
+  batchSize       Decimal // targeted expected output for this run
+  productionDate  DateTime
+  expectedOutput  Decimal @default(0) // derived from BOM for the batch size
+  actualGoodOutput Decimal @default(0)
+  damagedPackaging Decimal @default(0)
+  scrapWastage     Decimal @default(0)
+  labourCost      Decimal @default(0)
+  gasPowerCost    Decimal @default(0)
+  otherOverheads  Decimal @default(0)
+  totalCost       Decimal @default(0)
+  costPerPacket   Decimal @default(0)
+  // DRAFT | POSTED | REVERSED
+  status          String   @default("DRAFT")
+  createdById     String?
+  createdBy       User?    @relation("ProductionRunCreator", fields: [createdById], references: [id])
+  approvedById    String?
+  approvedBy      User?    @relation("ProductionRunApprover", fields: [approvedById], references: [id])
+  postedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  consumption ProductionConsumption[]
+  costLines   ProductionCostLine[]
+
+  @@index([status])
+  @@index([productId])
+}
+
+model ProductionConsumption {
+  id              String  @id @default(cuid())
+  productionRunId String
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  itemId          String
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+  plannedQuantity Decimal
+  actualQuantity  Decimal
+  unit            String
+  variancePct     Decimal?
+  // True for packaging components (pouches, cartons) — used by variance UI.
+  isPackaging     Boolean @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([productionRunId])
+  @@index([itemId])
+}
+
+// Immutable costing snapshot for a posted production run so historical costs
+// stay explainable even if later valuation rates change.
+model ProductionCostLine {
+  id              String  @id @default(cuid())
+  productionRunId String
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  itemId          String?
+  item            InventoryItem? @relation(fields: [itemId], references: [id])
+  // RAW_MATERIAL | PACKAGING | LABOUR | GAS_POWER | OTHER_OVERHEAD
+  componentType   String
+  description     String
+  quantity        Decimal?
+  rate            Decimal?
+  amount          Decimal
+  createdAt       DateTime @default(now())
+
+  @@index([productionRunId])
+}
+
+// ---------------------------------------------------------------------------
+// STOCK LEDGER (source of truth for all inventory)
+// ---------------------------------------------------------------------------
+
+model StockMovement {
+  id            String   @id @default(cuid())
+  movementNumber String  @unique // MOV-000001
+  itemId        String
+  item          InventoryItem @relation(fields: [itemId], references: [id])
+  itemCategory  String // denormalized InventoryItem.category for fast filtering
+  quantityIn     Decimal  @default(0)
+  quantityOut    Decimal  @default(0)
+  unit           String
+  // OPENING | PURCHASE_RECEIPT | PRODUCTION_ISSUE | PRODUCTION_RECEIPT |
+  // DISPATCH | CUSTOMER_RETURN | DAMAGE | ADJUSTMENT | REVERSAL
+  movementType   String
+  // PURCHASE | PRODUCTION_RUN | SALES_ORDER | INVOICE | DISPATCH |
+  // ADJUSTMENT | OPENING
+  sourceDocType  String?
+  sourceDocId    String?
+  balanceAfter   Decimal // running balance after this movement (audit readable)
+  rate           Decimal? // valuation rate applicable to this movement
+  userId         String?
+  user           User?   @relation(fields: [userId], references: [id])
+  remarks        String?
+  createdAt      DateTime @default(now())
+
+  @@index([itemId, createdAt])
+  @@index([itemCategory])
+  @@index([movementType])
+  @@index([sourceDocType, sourceDocId])
+}
+
+// ---------------------------------------------------------------------------
+// SALES ORDERS
+// ---------------------------------------------------------------------------
+
+model SalesOrder {
+  id          String   @id @default(cuid())
+  orderNumber String   @unique // SO-000001
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  salesmanId  String?
+  salesman    User?    @relation("SalesOrderSalesman", fields: [salesmanId], references: [id])
+  reviewedById String?
+  reviewedBy   User?   @relation("SalesOrderReviewer", fields: [reviewedById], references: [id])
+  orderDate   DateTime
+  // DRAFT | SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED | INVOICED |
+  // PARTIALLY_DISPATCHED | DISPATCHED | CANCELLED
+  status     String   @default("DRAFT")
+  subtotal   Decimal  @default(0)
+  taxTotal   Decimal  @default(0)
+  total      Decimal  @default(0)
+  remarks    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  items    SalesOrderItem[]
+  invoices Invoice[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([salesmanId])
+}
+
+model SalesOrderItem {
+  id            String  @id @default(cuid())
+  salesOrderId  String
+  salesOrder    SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product @relation(fields: [productId], references: [id])
+  quantity      Decimal
+  unitPrice     Decimal
+  lineTotal     Decimal
+  // Tracks partial dispatch per line.
+  dispatchedQuantity Decimal @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([salesOrderId])
+}
+
+// ---------------------------------------------------------------------------
+// GST INVOICING
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id            String   @id @default(cuid())
+  invoiceNumber String   @unique // INV-2026-000001
+  financialYear String // "2026-27"
+  invoiceDate   DateTime
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  salesOrderId  String?
+  salesOrder    SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  placeOfSupply String
+  isInterState   Boolean  @default(false)
+  totalTaxable  Decimal  @default(0)
+  cgst          Decimal  @default(0)
+  sgst          Decimal  @default(0)
+  igst          Decimal  @default(0)
+  totalAmount   Decimal  @default(0)
+  // POSTED | PARTIALLY_PAID | PAID | CANCELLED
+  status        String   @default("POSTED")
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items     InvoiceItem[]
+  dispatches Dispatch[]
+  payments  Payment[]
+
+  @@index([invoiceDate])
+  @@index([customerId])
+  @@index([financialYear])
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product? @relation(fields: [productId], references: [id])
+  hsnCode     String
+  description String
+  quantity    Decimal
+  unitPrice   Decimal
+  taxableValue Decimal
+  gstRate     Decimal
+  cgst        Decimal @default(0)
+  sgst        Decimal @default(0)
+  igst        Decimal @default(0)
+  lineTotal   Decimal
+}
+
+// ---------------------------------------------------------------------------
+// DISPATCH
+// ---------------------------------------------------------------------------
+
+model Dispatch {
+  id            String   @id @default(cuid())
+  dispatchNumber String  @unique // DSP-000001
+  invoiceId     String
+  invoice       Invoice @relation(fields: [invoiceId], references: [id])
+  dispatchDate  DateTime
+  vehicleRef    String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items DispatchItem[]
+}
+
+model DispatchItem {
+  id         String  @id @default(cuid())
+  dispatchId String
+  dispatch   Dispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  quantity   Decimal
+}
+
+// ---------------------------------------------------------------------------
+// PAYMENTS & RECEIVABLES
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id            String   @id @default(cuid())
+  paymentNumber String   @unique // PAY-000001
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  invoiceId     String
+  invoice       Invoice @relation(fields: [invoiceId], references: [id])
+  paymentDate   DateTime
+  amount        Decimal
+  // CASH | UPI | BANK | CHEQUE | RTGS | NEFT
+  paymentMethod String
+  referenceNumber String?
+  remarks       String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([customerId])
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT TRAIL
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  action       String // CREATE | UPDATE | DELETE | POST | APPROVE | REJECT | REVERSE
+  entityType   String
+  entityId     String?
+  // JSON-serialized previous/new values (String to stay SQLite-safe).
+  previousValue String?
+  newValue      String?
+  remarks       String?
+  createdAt     DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
