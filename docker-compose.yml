@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "file:/data/dev.db"
+      SESSION_SECRET: "change-me-to-a-long-random-string-for-demo"
+      SELLER_NAME: "Annapoorna Snacks Pvt Ltd (DEMO)"
+      SELLER_GSTIN: "33ABCDE1234F1Z5"
+      SELLER_STATE: "Tamil Nadu"
+      SELLER_STATE_CODE: "33"
+      SEED: "1"
+    volumes:
+      - factoryflow-data:/data
+
+volumes:
+  factoryflow-data:
