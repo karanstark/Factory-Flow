@@ -12,6 +12,7 @@ import { inr } from "@/lib/currency";
 import { ORDER_STATUS } from "@/lib/constants";
 import { getSalesmanDashboardData } from "./actions";
 import { logoutAction } from "@/app/login/actions";
+import OrderForm from "./order-form";
 
 const dateFormatter = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" });
 const numberFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 });
@@ -66,7 +67,16 @@ function StatCard({ label, value, detail, icon: Icon, tone }: { label: string; v
 
 export default async function SalesmanDashboardUI() {
   const data = await getSalesmanDashboardData();
-  const { user, stats, orders, customers, invoices } = data;
+  const { user, stats, orders, customers, invoices, products } = data;
+
+  const productOpts = products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    packSize: p.packSize,
+    sellingPrice: p.sellingPrice.toString(),
+    unit: p.unit,
+    stock: Number(p.inventoryItem.currentStock),
+  }));
 
   return (
     <div className="min-h-screen bg-[#080d18] text-slate-100">
@@ -156,6 +166,10 @@ export default async function SalesmanDashboardUI() {
             <StatCard label="Outstanding" value={stats.outstanding} detail="Unpaid invoices" icon={CreditCard} tone="amber" />
           </section>
 
+          {customers.length > 0 && products.length > 0 && (
+            <OrderForm customers={customers} products={productOpts} />
+          )}
+
           <section id="orders" className="mt-6">
             <div className="rounded-2xl border border-white/[0.07] bg-[#0e1625] p-5 sm:p-6">
               <div className="flex items-center justify-between gap-3 mb-4">
@@ -184,7 +198,9 @@ export default async function SalesmanDashboardUI() {
                       {orders.map((order) => (
                         <tr key={order.id} className="border-b border-white/[0.05] last:border-0">
                           <td className="py-3.5">
-                            <p className="font-medium text-slate-200">{order.orderNumber}</p>
+                            <a href={`/orders/${order.id}`} className="font-medium text-slate-200 hover:text-emerald-300 hover:underline">
+                              {order.orderNumber}
+                            </a>
                             <p className="mt-0.5 text-[11px] text-slate-600">{order.items.length} items</p>
                           </td>
                           <td className="py-3.5 text-slate-400">{order.customer.name}</td>

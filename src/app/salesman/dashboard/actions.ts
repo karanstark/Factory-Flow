@@ -4,7 +4,25 @@ import { requireRole } from "@/lib/session";
 import { ROLES } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
 import { inr } from "@/lib/currency";
-import { ORDER_STATUS, PRODUCTION_STATUS } from "@/lib/constants";
+import { ORDER_STATUS } from "@/lib/constants";
+import { createOrder } from "@/server/orders";
+import type { CreateOrderInput } from "@/server/orders";
+
+export interface ActionResult {
+  ok: boolean;
+  error?: string;
+  orderNumber?: string;
+}
+
+export async function createSalesOrderAction(input: CreateOrderInput): Promise<ActionResult> {
+  const user = await requireRole(ROLES.SALESMAN);
+  try {
+    const order = await createOrder(input, user.id, user.role);
+    return { ok: true, orderNumber: order.orderNumber };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Could not create the order." };
+  }
+}
 
 export async function getSalesmanDashboardData() {
   const user = await requireRole(ROLES.SALESMAN);
@@ -12,7 +30,7 @@ export async function getSalesmanDashboardData() {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [orders, customers, invoices] = await Promise.all([
+  const [orders, customers, invoices, products] = await Promise.all([
     prisma.salesOrder.findMany({
       where: { salesmanId: user.id },
       include: { customer: { select: { name: true } }, items: { select: { id: true } } },
@@ -30,9 +48,14 @@ export async function getSalesmanDashboardData() {
       orderBy: { invoiceDate: "desc" },
       take: 10,
     }),
+    prisma.product.findMany({
+      where: { active: true },
+      include: { inventoryItem: { select: { currentStock: true, unit: true } } },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
-  const CLOSED_STATUSES = new Set([ORDER_STATUS.DISPATCHED, ORDER_STATUS.CANCELLED, ORDER_STATUS.REJECTED]);
+  const CLOSED_STATUSES = new Set<string>([ORDER_STATUS.DISPATCHED, ORDER_STATUS.CANCELLED, ORDER_STATUS.REJECTED]);
   const openOrders = orders.filter((o) => !CLOSED_STATUSES.has(o.status));
   const pendingReview = orders.filter((o) => o.status === ORDER_STATUS.SUBMITTED || o.status === ORDER_STATUS.UNDER_REVIEW);
   const outstanding = invoices.reduce((total, inv) => {
@@ -52,5 +75,6 @@ export async function getSalesmanDashboardData() {
     orders,
     customers,
     invoices,
+    products,
   };
 }
