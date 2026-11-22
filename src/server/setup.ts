@@ -23,7 +23,7 @@ export const DEMO_USERS = [
 /** Delete everything in reverse FK dependency order (safe to re-run). */
 export async function deleteAllData() {
   const order = [
-    "auditLog", "stockMovement", "payment", "dispatchItem", "dispatch",
+    "auditLog", "stockMovement", "payment", "creditNote", "dispatchItem", "dispatch",
     "invoiceItem", "invoice", "salesOrderItem", "salesOrder",
     "productionCostLine", "productionConsumption", "productionRun",
     "purchaseItem", "purchase", "bOMItem", "bOM",

@@ -81,6 +81,7 @@ export const SOURCE_DOC = {
   INVOICE: "INVOICE",
   DISPATCH: "DISPATCH",
   ADJUSTMENT: "ADJUSTMENT",
+  CREDIT_NOTE: "CREDIT_NOTE",
 } as const;
 
 export const CUSTOMER_TYPE = {

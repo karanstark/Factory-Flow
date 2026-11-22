@@ -429,11 +429,12 @@ model Invoice {
   status        String   @default("POSTED")
   createdBy     String?
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now()) @updatedAt
 
-  items     InvoiceItem[]
-  dispatches Dispatch[]
-  payments  Payment[]
+  items       InvoiceItem[]
+  dispatches  Dispatch[]
+  payments    Payment[]
+  creditNotes CreditNote[]
 
   @@index([invoiceDate])
   @@index([customerId])
@@ -456,6 +457,28 @@ model InvoiceItem {
   sgst        Decimal @default(0)
   igst        Decimal @default(0)
   lineTotal   Decimal
+}
+
+// ---------------------------------------------------------------------------
+// CREDIT NOTES
+// ---------------------------------------------------------------------------
+
+// Posted invoices are never deleted or edited. Cancellation is done by issuing
+// a credit note: the invoice is marked CANCELLED, a CreditNote row records the
+// reversal amount + reason, and the audit log captures who cancelled it.
+model CreditNote {
+  id               String   @id @default(cuid())
+  creditNoteNumber String   @unique // CN-2026-000001
+  invoiceId        String
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id])
+  creditNoteDate   DateTime
+  amount           Decimal  @default(0)
+  reason           String?
+  createdBy        String?
+  createdAt        DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([creditNoteDate])
 }
 
 // ---------------------------------------------------------------------------

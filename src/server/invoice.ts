@@ -120,6 +120,65 @@ export async function generateInvoiceFromOrder(orderId: string, adminId: string)
   });
 }
 
+/**
+ * Cancel a posted invoice by issuing a credit note. The invoice is never
+ * deleted or edited: it is marked CANCELLED, a CreditNote row records the
+ * reversal, and the audit log captures the actor, reason and timestamp.
+ *
+ * Stock handling: dispatches that already moved finished goods stay moved —
+ * physical goods are with the customer. If the goods come back, record a
+ * CUSTOMER_RETURN / ADJUSTMENT movement separately so the ledger stays the
+ * source of truth.
+ */
+export async function cancelInvoiceWithCreditNote(
+  invoiceId: string,
+  userId: string,
+  reason?: string,
+) {
+  return prisma.$transaction(async (tx) => {
+    const invoice = await tx.invoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      include: { payments: true, dispatches: { include: { items: true } } },
+    });
+    if (invoice.status === INVOICE_STATUS.CANCELLED) {
+      throw new Error(`Invoice ${invoice.invoiceNumber} is already cancelled.`);
+    }
+
+    const fy = financialYear(invoice.invoiceDate);
+    const fyStart = fy.split("-")[0];
+    const cnCount = await tx.creditNote.count({ where: { creditNoteDate: { gte: new Date(`${fyStart}-04-01`) } } });
+    const creditNoteNumber = `CN-${fyStart}-${String(cnCount + 1).padStart(6, "0")}`;
+
+    const creditNote = await tx.creditNote.create({
+      data: {
+        creditNoteNumber,
+        invoiceId: invoice.id,
+        creditNoteDate: new Date(),
+        amount: round2(invoice.totalAmount),
+        reason: reason ?? null,
+        createdBy: userId,
+      },
+    });
+
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: { status: INVOICE_STATUS.CANCELLED },
+    });
+
+    await logAudit(tx, {
+      userId,
+      action: "CANCEL",
+      entityType: "Invoice",
+      entityId: invoice.id,
+      previousValue: { status: invoice.status, totalAmount: invoice.totalAmount.toString() },
+      newValue: { status: INVOICE_STATUS.CANCELLED, creditNoteNumber },
+      remarks: `Invoice ${invoice.invoiceNumber} cancelled via credit note ${creditNoteNumber}${reason ? `: ${reason}` : ""}`,
+    });
+
+    return { creditNote, invoiceNumber: invoice.invoiceNumber };
+  });
+}
+
 export async function getInvoice(id: string) {
   return prisma.invoice.findUniqueOrThrow({
     where: { id },
