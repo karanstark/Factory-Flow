@@ -48,7 +48,7 @@ export async function getAdminDashboardData() {
 
   const lowStock = inventory.filter((item) => item.reorderLevel !== null && Number(item.currentStock) <= Number(item.reorderLevel));
   const inventoryValue = inventory.reduce((total, item) => total + Number(item.currentStock) * Number(item.avgRate), 0);
-  const CLOSED_STATUSES = new Set([ORDER_STATUS.DISPATCHED, ORDER_STATUS.CANCELLED, ORDER_STATUS.REJECTED]);
+  const CLOSED_STATUSES = new Set<string>([ORDER_STATUS.DISPATCHED, ORDER_STATUS.CANCELLED, ORDER_STATUS.REJECTED]);
   const openOrders = orders.filter((o) => !CLOSED_STATUSES.has(o.status)).length;
   const awaitingReview = orders.filter((o) => o.status === ORDER_STATUS.SUBMITTED || o.status === ORDER_STATUS.UNDER_REVIEW).length;
   const producedThisMonth = recentRuns

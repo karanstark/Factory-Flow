@@ -121,11 +121,17 @@ export default async function ProductionDashboardUI() {
 
         <div className="mt-11 px-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">Workspace</div>
         <nav className="mt-3 space-y-1">
-          <a href="#overview" className="flex items-center gap-3 rounded-xl bg-emerald-400/[0.09] px-3 py-2.5 text-sm font-medium text-emerald-300">
+          <a href="/production/runs/new" className="flex items-center gap-3 rounded-xl bg-emerald-400/[0.09] px-3 py-2.5 text-sm font-medium text-emerald-300">
+            <Factory size={17} /> New run
+          </a>
+          <a href="#overview" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-emerald-300">
             <TrendingUp size={17} /> Overview
           </a>
           <a href="#runs" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <Activity size={17} /> Production Runs
+          </a>
+          <a href="/inventory" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <Boxes size={17} /> Stock ledger
           </a>
           <a href="#stock" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <Boxes size={17} /> Stock Levels
@@ -207,7 +213,7 @@ export default async function ProductionDashboardUI() {
                       <div key={run.id}>
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-slate-200">{run.product.name}</p>
+                            <a href={`/production/runs/${run.id}`} className="truncate text-sm font-medium text-slate-200 hover:text-emerald-300 hover:underline">{run.product.name}</a>
                             <p className="mt-0.5 text-xs text-slate-500">{run.runNumber} · {dateFormatter.format(run.productionDate)}</p>
                           </div>
                           <div className="shrink-0 text-right">

@@ -356,12 +356,12 @@ export default async function OwnerDashboardUI() {
                           <td className="py-3.5 font-medium text-slate-200">{u.name}</td>
                           <td className="py-3.5 text-slate-400">{u.email}</td>
                           <td className="py-3.5">
-                            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium
-                              {u.role === "ADMIN" || u.role === "OWNER" ? "bg-violet-400/10 text-violet-300" :
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                              u.role === "ADMIN" || u.role === "OWNER" ? "bg-violet-400/10 text-violet-300" :
                                u.role === "PRODUCTION" ? "bg-orange-400/10 text-orange-300" :
                                u.role === "ACCOUNTANT" ? "bg-sky-400/10 text-sky-300" :
                                "bg-emerald-400/10 text-emerald-300"
-                              }">
+                              }`}>
                               {roleLabels[u.role]}
                             </span>
                           </td>

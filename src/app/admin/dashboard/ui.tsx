@@ -111,11 +111,32 @@ export default async function AdminDashboardUI() {
           <a href="#inventory" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <Boxes size={17} /> Inventory
           </a>
+          <a href="/admin/orders" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <ClipboardList size={17} /> Order approvals
+          </a>
           <a href="#orders" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <ClipboardList size={17} /> Orders
           </a>
           <a href="#production" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <Factory size={17} /> Production
+          </a>
+          <a href="/admin/invoices" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <FileText size={17} /> Invoices
+          </a>
+          <a href="/admin/purchases" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <PackageCheck size={17} /> Purchases
+          </a>
+          <a href="/admin/masters" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <Boxes size={17} /> Masters
+          </a>
+          <a href="/inventory" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <Boxes size={17} /> Stock ledger
+          </a>
+          <a href="/reports" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <IndianRupee size={17} /> Reports
+          </a>
+          <a href="/admin/audit" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
+            <Activity size={17} /> Audit trail
           </a>
           <a href="#finance" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/[0.04] hover:text-white">
             <FileText size={17} /> Finance
@@ -285,7 +306,11 @@ export default async function AdminDashboardUI() {
                           </td>
                           <td className="py-3.5 text-slate-400">{order.customer.name}</td>
                           <td className="py-3.5 text-slate-500">{dateFormatter.format(order.orderDate)}</td>
-                          <td className="py-3.5 text-right"><StatusBadge status={order.status} /></td>
+                          <td className="py-3.5 text-right">
+                            <span className="inline-flex rounded-full bg-slate-400/10 px-2.5 py-1 text-[10px] font-medium text-slate-300">
+                              {order.status.replaceAll("_", " ").toLowerCase()}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
